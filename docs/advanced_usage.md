@@ -914,7 +914,7 @@ PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
 
 A barcode containing `CORR:ACME` would look up or create a correspondent named `Company: ACME`.
 
-#### Tags with Multiple Values
+#### Tags with multiple Values
 
 Tags support comma-separated values in a single barcode. Each tag name will be trimmed and processed individually.
 
@@ -944,7 +944,7 @@ PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
 }'
 ```
 
-#### Multiple Patterns for the Same Property
+#### Multiple Patterns for the same Property
 
 You can define multiple regex patterns that map to the same property, useful for supporting different languages or formats:
 
@@ -957,6 +957,82 @@ PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
 ```
 
 This configuration accepts `TITLE:`, `HEADING:`, or `TITRE:` (French) prefixes for setting the document title.
+
+#### Combining multiple Properties in one Barcode
+
+Instead of using separate barcodes for each property, you can combine multiple document properties (including custom fields) in a single barcode. This is useful for creating comprehensive QR codes that encode all relevant metadata in one scan.
+
+**Basic approach using pipe-separated values:**
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "DOC:(?P<correspondent>[^|]+)\\|(?P<document_type>[^|]+)\\|(?P<title>[^|]+)\\|(?P<tags>[^|]+)\\|(?P<created>[^|]+)": "\\g<correspondent>|\\g<document_type>|\\g<title>|\\g<tags>|\\g<created>"
+}'
+```
+
+Barcode text example:
+
+```
+DOC:ACME Corp|Invoice|January Statement|Finance,2024|2024-01-15
+```
+
+This single barcode sets:
+
+-   Correspondent: "ACME Corp"
+-   Document type: "Invoice"
+-   Title: "January Statement"
+-   Tags: "Finance" and "2024"
+-   Created date: 2024-01-15
+
+**Combining standard properties with custom fields:**
+
+You can mix standard document properties with custom fields using numbered named groups for the custom fields:
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "INV:(?P<correspondent>[^|]+)\\|(?P<title>[^|]+)\\|(?P<custom_field_name>[^|=]+)=(?P<custom_field_value>[^|]+)\\|(?P<custom_field_name_2>[^|=]+)=(?P<custom_field_value_2>.*)": "\\g<correspondent>|\\g<title>|\\g<custom_field_name>=\\g<custom_field_value>,\\g<custom_field_name_2>=\\g<custom_field_value_2>"
+}'
+```
+
+Barcode text example:
+
+```
+INV:ACME Corp|January Invoice|InvoiceNumber=INV-2024-001|Amount=1500
+```
+
+This sets correspondent and title as standard properties, plus two custom fields.
+
+**Multiple custom fields only:**
+
+For barcodes containing only custom fields, you have several options:
+
+1. **Numbered named groups** (\_2, \_3, etc.):
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "FIELDS:(?P<custom_field_name>[^=,]+)=(?P<custom_field_value>[^,]+),(?P<custom_field_name_2>[^=,]+)=(?P<custom_field_value_2>[^,]+),(?P<custom_field_name_3>[^=,]+)=(?P<custom_field_value_3>.*)": "\\g<custom_field_name>=\\g<custom_field_value>,\\g<custom_field_name_2>=\\g<custom_field_value_2>,\\g<custom_field_name_3>=\\g<custom_field_value_3>"
+}'
+```
+
+Barcode text: `FIELDS:Project=Alpha,Status=Active,Priority=High`
+
+2. **Simple pattern with auto-parsing**:
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "FIELDS:(.*)": "\\1"
+}'
+```
+
+The simpler pattern works because when the substitution result contains comma-separated `name=value` pairs, they are automatically parsed as multiple custom fields.
+
+!!! tip
+
+    When combining properties, use delimiters (like `|` or `,`) that don't appear in your actual data. The regex pattern `[^|]` means "match anything except pipe", which prevents accidentally matching across property boundaries.
+
+!!! note
+
+    You can use any delimiter you prefer - pipes, semicolons, tabs, etc. Just ensure your regex pattern accounts for it correctly and that your barcode format doesn't use that character within the property values themselves.
 
 #### Auto-Creation of Entities
 
@@ -976,78 +1052,6 @@ Supported values:
 !!! note
 
     The `owner` and `created` properties do not support auto-creation. Users must exist in the system, and dates must be in valid ISO format (YYYY-MM-DD).
-
-#### Usage Examples
-
-**Example 1: Basic invoice processing**
-
-Print QR codes on your invoice pages:
-
--   `CORR:ACME Corp`
--   `TYPE:Invoice`
--   `TAG:Unpaid`
--   `DATE:2024-01-15`
-
-Configuration:
-
-```bash
-PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA=true
-PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
-  "CORR:(?P<correspondent>.*)": "\\g<correspondent>",
-  "TYPE:(?P<document_type>.*)": "\\g<document_type>",
-  "TAG:(?P<tags>.*)": "\\g<tags>",
-  "DATE:(?P<created>\\d{4}-\\d{2}-\\d{2})": "\\g<created>"
-}'
-PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE='["correspondent", "document_type", "tag"]'
-```
-
-The document will automatically be assigned to ACME Corp, typed as Invoice, tagged as Unpaid, and dated January 15, 2024.
-
-**Example 2: Multi-language support**
-
-```bash
-PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
-  "TYPE:(?P<document_type>.*)": "\\g<document_type>",
-  "TYP:(?P<document_type>.*)": "\\g<document_type>",
-  "TITLE:(?P<title>.*)": "\\g<title>",
-  "TITRE:(?P<title>.*)": "\\g<title>"
-}'
-```
-
-This supports both English and French barcode prefixes.
-
-**Example 3: Custom field tracking**
-
-Track additional metadata using custom fields:
-
-Barcodes:
-
--   `CF:Project=Website Redesign`
--   `CF:Client=ABC Industries`
--   `CF:Status=In Review`
-
-Configuration:
-
-```bash
-PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
-  "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "\\g<custom_field_name>=\\g<custom_field_value>"
-}'
-PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE='["custom_field"]'
-```
-
-**Example 4: Complete document metadata on one page**
-
-You can include multiple barcodes on a single page to set multiple properties at once:
-
--   QR Code 1: `CORR:City Hall`
--   QR Code 2: `TYPE:Official Document`
--   QR Code 3: `TAG:Important, 2024, Municipal`
--   QR Code 4: `TITLE:Building Permit`
--   QR Code 5: `OWNER:adminuser`
--   QR Code 6: `DATE:2024-03-15`
--   QR Code 7: `CF:Permit Number=2024-BP-12345`
-
-All metadata will be extracted and applied to the document during consumption.
 
 #### Interaction with Other Features
 
