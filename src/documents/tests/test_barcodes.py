@@ -1431,6 +1431,98 @@ class TestBarcodeMetadata(
             reader.run()
             self.assertIsNone(reader.metadata_overrides)
 
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "FIELDS:(?P<custom_field_name>[^=]+)=(?P<custom_field_value>[^,]+),(?P<custom_field_name_2>[^=]+)=(?P<custom_field_value_2>[^,]+),(?P<custom_field_name_3>[^=]+)=(?P<custom_field_value_3>.*)": "\\g<custom_field_name>=\\g<custom_field_value>,\\g<custom_field_name_2>=\\g<custom_field_value_2>,\\g<custom_field_name_3>=\\g<custom_field_value_3>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["custom_field"],
+    )
+    def test_metadata_multiple_custom_fields_numbered_groups(self):
+        """
+        GIVEN:
+            - PDF containing a barcode with multiple custom fields using numbered named groups
+            - Pattern uses custom_field_name, custom_field_name_2, custom_field_name_3
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - All custom fields are extracted and created
+        """
+        from documents.models import CustomField
+
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-custom-fields-multiple.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+
+            # Verify all three custom fields were created
+            project_field = CustomField.objects.get(name="Project")
+            status_field = CustomField.objects.get(name="Status")
+            priority_field = CustomField.objects.get(name="Priority")
+
+            self.assertIn(project_field.id, reader.metadata_overrides.custom_fields)
+            self.assertIn(status_field.id, reader.metadata_overrides.custom_fields)
+            self.assertIn(priority_field.id, reader.metadata_overrides.custom_fields)
+
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[project_field.id],
+                "Alpha",
+            )
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[status_field.id],
+                "Active",
+            )
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[priority_field.id],
+                "High",
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CF_MULTI:(.*)": "\\g<1>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["custom_field"],
+    )
+    def test_metadata_multiple_custom_fields_comma_separated(self):
+        """
+        GIVEN:
+            - PDF containing a barcode with multiple custom fields in comma-separated format
+            - Substitution result contains multiple name=value pairs
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - All custom fields are parsed and created
+        """
+        from documents.models import CustomField
+
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-custom-fields-comma.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+
+            # Verify all three custom fields were created
+            invoice_field = CustomField.objects.get(name="Invoice")
+            amount_field = CustomField.objects.get(name="Amount")
+            due_date_field = CustomField.objects.get(name="DueDate")
+
+            self.assertIn(invoice_field.id, reader.metadata_overrides.custom_fields)
+            self.assertIn(amount_field.id, reader.metadata_overrides.custom_fields)
+            self.assertIn(due_date_field.id, reader.metadata_overrides.custom_fields)
+
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[invoice_field.id],
+                "INV-2024-001",
+            )
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[amount_field.id],
+                "1500",
+            )
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[due_date_field.id],
+                "2024-02-15",
+            )
+
     @override_settings(CONSUMER_ENABLE_BARCODE_METADATA=False)
     def test_metadata_feature_disabled(self):
         """
