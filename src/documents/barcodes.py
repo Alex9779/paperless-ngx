@@ -617,18 +617,75 @@ class BarcodePlugin(ConsumeTaskPlugin):
                                 f"Failed to parse created date '{created_value}'",
                             )
 
-                # Custom fields
-                if "custom_field_name" in gd or len(match.groups()) >= 2:
-                    cf_result = _apply_substitution(text, pattern, substitution)
-                    if cf_result:
-                        # Parse the result as "name=value"
-                        if "=" in cf_result:
-                            cf_name, cf_value = cf_result.split("=", 1)
-                        else:
-                            # Fallback to direct extraction if no = in result
-                            cf_name, cf_value = _extract_pair(match)
+                # Custom fields - support multiple fields from one barcode
+                # Check if this could be a custom field pattern:
+                # 1. Has custom_field_name named group, OR
+                # 2. Has at least 2 capture groups (name/value pairs), OR
+                # 3. Has any groups and the result contains "=" (comma-separated format)
+                has_cf_named_group = "custom_field_name" in gd
+                has_pair_groups = len(match.groups()) >= 2
+                has_single_group = len(match.groups()) >= 1
 
-                        if cf_name and cf_value:
+                if has_cf_named_group or has_pair_groups or has_single_group:
+                    cf_result = _apply_substitution(text, pattern, substitution)
+                    if (
+                        cf_result and "=" in cf_result
+                    ):  # Must have = to be a custom field
+                        # Collect all custom field pairs from the match
+                        cf_pairs = []
+
+                        # Strategy: The substitution result contains the transformed text
+                        # We need to parse it to extract name=value pairs
+
+                        # Check if we have multiple numbered named groups (custom_field_name, custom_field_name_2, etc.)
+                        has_numbered_groups = (
+                            "custom_field_name" in gd and "custom_field_name_2" in gd
+                        )
+
+                        if has_numbered_groups:
+                            # Multiple named group pairs - parse substitution result as comma-separated
+                            for pair in cf_result.split(","):
+                                pair = pair.strip()
+                                if "=" in pair:
+                                    cf_name, cf_value = pair.split("=", 1)
+                                    cf_pairs.append((cf_name.strip(), cf_value.strip()))
+                        elif "custom_field_name" in gd:
+                            # Single named group pair - parse substitution result
+                            if "=" in cf_result:
+                                # Could be single "name=value" or comma-separated "n1=v1,n2=v2"
+                                if "," in cf_result:
+                                    # Multiple fields in comma-separated format
+                                    for pair in cf_result.split(","):
+                                        pair = pair.strip()
+                                        if "=" in pair:
+                                            cf_name, cf_value = pair.split("=", 1)
+                                            cf_pairs.append(
+                                                (cf_name.strip(), cf_value.strip()),
+                                            )
+                                else:
+                                    # Single field
+                                    cf_name, cf_value = cf_result.split("=", 1)
+                                    cf_pairs.append((cf_name.strip(), cf_value.strip()))
+                        else:
+                            # Numbered groups (no named groups) - parse substitution result
+                            if "," in cf_result:
+                                # Multiple comma-separated pairs
+                                # Split by comma to support multiple fields
+                                for pair in cf_result.split(","):
+                                    pair = pair.strip()
+                                    if "=" in pair:
+                                        cf_name, cf_value = pair.split("=", 1)
+                                        cf_pairs.append(
+                                            (cf_name.strip(), cf_value.strip()),
+                                        )
+                            else:
+                                # Fallback to direct extraction if no = in result
+                                cf_name, cf_value = _extract_pair(match)
+                                if cf_name and cf_value:
+                                    cf_pairs.append((cf_name, cf_value))
+
+                        # Process all collected custom field pairs
+                        for cf_name, cf_value in cf_pairs:
                             if cf_name in seen_custom_field_keys:
                                 logger.warning(
                                     f"Custom field '{cf_name}' already set, ignoring '{cf_value}'",
