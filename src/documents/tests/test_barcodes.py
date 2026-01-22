@@ -928,3 +928,521 @@ class TestTagBarcode(DirectoriesMixin, SampleDirMixin, GetReaderPluginMixin, Tes
             # expect error to be caught and logged only
             tags = reader.metadata.tag_ids
             self.assertEqual(tags, None)
+
+
+@override_settings(CONSUMER_BARCODE_SCANNER="PYZBAR")
+class TestBarcodeMetadata(
+    DirectoriesMixin,
+    FileSystemAssertsMixin,
+    SampleDirMixin,
+    GetReaderPluginMixin,
+    TestCase,
+):
+    """Tests for the barcode metadata extraction feature"""
+
+    def setUp(self):
+        super().setUp()
+        from django.contrib.auth import get_user_model
+
+        from documents.models import Correspondent
+        from documents.models import CustomField
+        from documents.models import DocumentType
+        from documents.models import Tag
+
+        User = get_user_model()
+
+        # Create some existing objects for lookup tests
+        self.existing_correspondent = Correspondent.objects.create(
+            name="Test Correspondent",
+        )
+        self.existing_doc_type = DocumentType.objects.create(name="Test Type")
+        self.existing_tag1 = Tag.objects.create(name="Tag1")
+        self.existing_tag2 = Tag.objects.create(name="Tag2")
+        self.existing_user = User.objects.create_user(
+            username="testuser",
+            password="test123",
+        )
+        self.existing_custom_field = CustomField.objects.create(
+            name="Department",
+            data_type=CustomField.FieldDataType.STRING,
+        )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CORR:(?P<correspondent>.*)": "\\g<correspondent>",
+        },
+    )
+    def test_metadata_correspondent_basic(self):
+        """
+        GIVEN:
+            - PDF containing a correspondent barcode
+            - Correspondent exists in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Correspondent is extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-correspondent.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(
+                reader.metadata_overrides.correspondent_id,
+                self.existing_correspondent.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CORR:(?P<correspondent>.*)": "\\g<correspondent>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["correspondent"],
+    )
+    def test_metadata_correspondent_autocreate(self):
+        """
+        GIVEN:
+            - PDF containing a correspondent barcode
+            - Correspondent does not exist in database
+            - Auto-create is enabled for correspondents
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Correspondent is created and extracted
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-correspondent-new.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            from documents.models import Correspondent
+
+            self.assertIsNotNone(reader.metadata_overrides)
+            correspondent = Correspondent.objects.get(name__iexact="New Correspondent")
+            self.assertEqual(
+                reader.metadata_overrides.correspondent_id,
+                correspondent.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CORR:(?P<correspondent>.*)": "Mapped: \\g<correspondent>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["correspondent"],
+    )
+    def test_metadata_correspondent_substitution(self):
+        """
+        GIVEN:
+            - PDF containing a correspondent barcode
+            - Mapping includes substitution to transform the value
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Substitution is applied before lookup/create
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-correspondent-substitute.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            from documents.models import Correspondent
+
+            self.assertIsNotNone(reader.metadata_overrides)
+            correspondent = Correspondent.objects.get(name__iexact="Mapped: TestCorp")
+            self.assertEqual(
+                reader.metadata_overrides.correspondent_id,
+                correspondent.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CORR:(?P<correspondent>TestCorp)": "TestCorp Renamed",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["correspondent"],
+    )
+    def test_metadata_correspondent_literal_substitution(self):
+        """
+        GIVEN:
+            - PDF containing a correspondent barcode
+            - Mapping uses literal substitution without group reference
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Literal substitution is applied before lookup/create
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-correspondent-substitute.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            from documents.models import Correspondent
+
+            self.assertIsNotNone(reader.metadata_overrides)
+            correspondent = Correspondent.objects.get(name__iexact="TestCorp Renamed")
+            self.assertEqual(
+                reader.metadata_overrides.correspondent_id,
+                correspondent.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "TYPE:(?P<document_type>.*)": "\\g<document_type>",
+        },
+    )
+    def test_metadata_document_type_basic(self):
+        """
+        GIVEN:
+            - PDF containing a document type barcode
+            - Document type exists in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Document type is extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-document-type.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(
+                reader.metadata_overrides.document_type_id,
+                self.existing_doc_type.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "TAG:(?P<tags>.*)": "\\g<tags>",
+        },
+    )
+    def test_metadata_tags_single(self):
+        """
+        GIVEN:
+            - PDF containing a single tag barcode
+            - Tag exists in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Tag is extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-tag-single.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertIn(self.existing_tag1.pk, reader.metadata_overrides.tag_ids)
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "TAG:(?P<tags>.*)": "\\g<tags>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["tag"],
+    )
+    def test_metadata_tags_comma_separated(self):
+        """
+        GIVEN:
+            - PDF containing comma-separated tags in one barcode
+            - Some tags exist, some need to be created
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - All tags are extracted/created correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-tags-multiple.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            from documents.models import Tag
+
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertIn(self.existing_tag1.pk, reader.metadata_overrides.tag_ids)
+            self.assertIn(self.existing_tag2.pk, reader.metadata_overrides.tag_ids)
+            # New tags should be created
+            new_tag = Tag.objects.get(name__iexact="Tag3")
+            self.assertIn(new_tag.pk, reader.metadata_overrides.tag_ids)
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "TITLE:(?P<title>.*)": "\\g<title>",
+        },
+    )
+    def test_metadata_title(self):
+        """
+        GIVEN:
+            - PDF containing a title barcode
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Title is extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-title.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(reader.metadata_overrides.title, "Test Document Title")
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "OWNER:(?P<owner>.*)": "\\g<owner>",
+        },
+    )
+    def test_metadata_owner(self):
+        """
+        GIVEN:
+            - PDF containing an owner barcode
+            - User exists in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Owner is extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-owner.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(
+                reader.metadata_overrides.owner_id,
+                self.existing_user.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "OWNER:(?P<owner>testuser)": "mapped_testuser",
+        },
+    )
+    def test_metadata_owner_literal_substitution(self):
+        """
+        GIVEN:
+            - PDF containing an owner barcode
+            - Mapping uses literal substitution without group reference
+            - User with mapped username exists in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Literal substitution is applied for username lookup
+        """
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        # Create user with the mapped username
+        mapped_user = User.objects.create_user(
+            username="mapped_testuser",
+            password="test123",
+        )
+
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-owner.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(
+                reader.metadata_overrides.owner_id,
+                mapped_user.pk,
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "DATE:(?P<created>\\d{4}-\\d{2}-\\d{2})": "\\g<created>",
+        },
+    )
+    def test_metadata_created_date(self):
+        """
+        GIVEN:
+            - PDF containing a created date barcode
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Created date is extracted and parsed correctly
+        """
+        import datetime
+
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-date.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(
+                reader.metadata_overrides.created,
+                datetime.date(2024, 3, 15),
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "\\g<custom_field_name>=\\g<custom_field_value>",
+        },
+    )
+    def test_metadata_custom_field(self):
+        """
+        GIVEN:
+            - PDF containing a custom field barcode
+            - Custom field exists in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Custom field value is extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-custom-field.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertIn(
+                self.existing_custom_field.id,
+                reader.metadata_overrides.custom_fields,
+            )
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[self.existing_custom_field.id],
+                "Engineering",
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "\\g<custom_field_name>=\\g<custom_field_value>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["custom_field"],
+    )
+    def test_metadata_custom_field_autocreate(self):
+        """
+        GIVEN:
+            - PDF containing a custom field barcode
+            - Custom field does not exist in database
+            - Auto-create is enabled for custom fields
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Custom field is created and value is set
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-custom-field-new.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            from documents.models import CustomField
+
+            self.assertIsNotNone(reader.metadata_overrides)
+            custom_field = CustomField.objects.get(name="Location")
+            self.assertIn(custom_field.id, reader.metadata_overrides.custom_fields)
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[custom_field.id],
+                "Building A",
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "Prefix-\\g<custom_field_name>=Prefix-\\g<custom_field_value>",
+        },
+        CONSUMER_BARCODE_METADATA_AUTO_CREATE=["custom_field"],
+    )
+    def test_metadata_custom_field_substitution(self):
+        """
+        GIVEN:
+            - PDF containing a custom field barcode
+            - Mapping includes substitution to transform both name and value
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Substitution is applied before lookup/create
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-custom-field-substitute.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            from documents.models import CustomField
+
+            self.assertIsNotNone(reader.metadata_overrides)
+            custom_field = CustomField.objects.get(name="Prefix-Project")
+            self.assertIn(custom_field.id, reader.metadata_overrides.custom_fields)
+            self.assertEqual(
+                reader.metadata_overrides.custom_fields[custom_field.id],
+                "Prefix-Alpha",
+            )
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "CORR:(?P<correspondent>.*)": "\\g<correspondent>",
+            "TYPE:(?P<document_type>.*)": "\\g<document_type>",
+            "TAG:(?P<tags>.*)": "\\g<tags>",
+            "TITLE:(?P<title>.*)": "\\g<title>",
+        },
+    )
+    def test_metadata_combined_multiple_properties(self):
+        """
+        GIVEN:
+            - PDF containing multiple metadata barcodes (correspondent, type, tags, title)
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - All metadata properties are extracted correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-combined.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(
+                reader.metadata_overrides.correspondent_id,
+                self.existing_correspondent.pk,
+            )
+            self.assertEqual(
+                reader.metadata_overrides.document_type_id,
+                self.existing_doc_type.pk,
+            )
+            self.assertIn(self.existing_tag1.pk, reader.metadata_overrides.tag_ids)
+            self.assertEqual(reader.metadata_overrides.title, "Combined Test")
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "TITLE:(?P<title>.*)": "\\g<title>",
+            "TITEL:(?P<title>.*)": "\\g<title>",  # codespell:ignore titel
+        },
+    )
+    def test_metadata_multiple_patterns_same_property(self):
+        """
+        GIVEN:
+            - Multiple regex patterns for the same property (e.g., TITLE and TITEL)  # codespell:ignore titel
+            - PDF contains one of the patterns
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - The matching pattern extracts the value correctly
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-title-german.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNotNone(reader.metadata_overrides)
+            self.assertEqual(reader.metadata_overrides.title, "German Title")
+
+    @override_settings(
+        CONSUMER_ENABLE_BARCODE_METADATA=True,
+        CONSUMER_BARCODE_METADATA_MAPPING={
+            "OWNER:(?P<owner>\\w+)": "\\g<owner>",
+        },
+    )
+    def test_metadata_owner_not_found(self):
+        """
+        GIVEN:
+            - PDF containing an owner barcode
+            - User does not exist in database
+        WHEN:
+            - File is scanned for metadata barcodes
+        THEN:
+            - Owner extraction fails gracefully (logged, not set)
+            - No metadata is extracted since lookup failed
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-owner-missing.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNone(reader.metadata_overrides)
+
+    @override_settings(CONSUMER_ENABLE_BARCODE_METADATA=False)
+    def test_metadata_feature_disabled(self):
+        """
+        GIVEN:
+            - PDF containing metadata barcodes
+            - Metadata extraction is disabled
+        WHEN:
+            - File is scanned
+        THEN:
+            - No metadata is extracted
+        """
+        test_file = self.BARCODE_SAMPLE_DIR / "metadata-correspondent.pdf"
+        with self.get_reader(test_file) as reader:
+            reader.run()
+            self.assertIsNone(reader.metadata_overrides)
