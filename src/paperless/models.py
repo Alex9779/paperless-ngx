@@ -265,6 +265,24 @@ class ApplicationConfiguration(AbstractSingletonModel):
         null=True,
     )
 
+    # PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA
+    barcode_enable_metadata = models.BooleanField(
+        verbose_name=_("Enables metadata barcode extraction"),
+        null=True,
+    )
+
+    # PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING
+    barcode_metadata_mapping = models.JSONField(
+        verbose_name=_("Sets the metadata barcode regex mapping"),
+        null=True,
+    )
+
+    # PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE
+    barcode_metadata_auto_create = models.JSONField(
+        verbose_name=_("Sets which metadata properties to auto-create"),
+        null=True,
+    )
+
     class Meta:
         verbose_name = _("paperless application settings")
 

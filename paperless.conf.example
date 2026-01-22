@@ -66,6 +66,17 @@
 #PAPERLESS_CONSUMER_BARCODE_DPI=300
 #PAPERLESS_CONSUMER_ENABLE_TAG_BARCODE=false
 #PAPERLESS_CONSUMER_TAG_BARCODE_MAPPING={"TAG:(.*)": "\\g<1>"}
+#PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA=true
+#PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+#  "CORR:(?P<correspondent>.*)": "\\\\g<correspondent>",
+#  "TYPE:(?P<document_type>.*)": "\\\\g<document_type>",
+#  "TAG:(?P<tags>.*)": "\\\\g<tags>",
+#  "TITLE:(?P<title>.*)": "\\\\g<title>",
+#  "OWNER:(?P<owner>.*)": "\\\\g<owner>",
+#  "DATE:(?P<created>\\\\d{4}-\\\\d{2}-\\\\d{2})": "\\\\g<created>",
+#  "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "\\\\g<custom_field_name>=\\\\g<custom_field_value>"
+#}'
+#PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE='["correspondent", "document_type", "tag", "custom_field"]'
 #PAPERLESS_CONSUMER_ENABLE_COLLATE_DOUBLE_SIDED=false
 #PAPERLESS_CONSUMER_COLLATE_DOUBLE_SIDED_SUBDIR_NAME=double-sided
 #PAPERLESS_CONSUMER_COLLATE_DOUBLE_SIDED_TIFF_SUPPORT=false

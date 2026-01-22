@@ -258,6 +258,27 @@ export const PaperlessConfigOptions: ConfigOption[] = [
     config_key: 'PAPERLESS_CONSUMER_TAG_BARCODE_MAPPING',
     category: ConfigCategory.Barcode,
   },
+  {
+    key: 'barcode_enable_metadata',
+    title: $localize`Enable Metadata Detection`,
+    type: ConfigOptionType.Boolean,
+    config_key: 'PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA',
+    category: ConfigCategory.Barcode,
+  },
+  {
+    key: 'barcode_metadata_mapping',
+    title: $localize`Metadata Mapping`,
+    type: ConfigOptionType.JSON,
+    config_key: 'PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING',
+    category: ConfigCategory.Barcode,
+  },
+  {
+    key: 'barcode_metadata_auto_create',
+    title: $localize`Auto-Create Metadata`,
+    type: ConfigOptionType.JSON,
+    config_key: 'PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE',
+    category: ConfigCategory.Barcode,
+  },
 ]
 
 export interface PaperlessConfig extends ObjectWithId {
@@ -287,4 +308,7 @@ export interface PaperlessConfig extends ObjectWithId {
   barcode_max_pages: number
   barcode_enable_tag: boolean
   barcode_tag_mapping: object
+  barcode_enable_metadata: boolean
+  barcode_metadata_mapping: object
+  barcode_metadata_auto_create: object
 }

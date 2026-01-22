@@ -47,6 +47,8 @@ class DocumentMetadataOverrides:
             self.document_type_id = other.document_type_id
         if other.storage_path_id is not None:
             self.storage_path_id = other.storage_path_id
+        if other.created is not None:
+            self.created = other.created
         if other.owner_id is not None:
             self.owner_id = other.owner_id
 

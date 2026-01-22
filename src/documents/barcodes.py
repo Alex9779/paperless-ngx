@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 import tempfile
@@ -80,6 +81,7 @@ class BarcodePlugin(ConsumeTaskPlugin):
             self.settings.barcode_enable_asn
             or self.settings.barcodes_enabled
             or self.settings.barcode_enable_tag
+            or self.settings.barcode_enable_metadata
         ) and self.input_doc.mime_type in supported_mimes
 
     def get_settings(self) -> BarcodeConfig:
@@ -136,6 +138,13 @@ class BarcodePlugin(ConsumeTaskPlugin):
             else:
                 self.metadata.tag_ids = tags
             logger.info(f"Found tags in barcode: {tags}")
+
+        # try reading metadata from barcodes
+        if self.settings.barcode_enable_metadata and (
+            overrides := self.metadata_overrides
+        ):
+            self.metadata.update(overrides)
+            logger.info("Found metadata in barcode")
 
         # Lastly attempt to split documents
         if self.settings.barcodes_enabled and (
@@ -413,6 +422,253 @@ class BarcodePlugin(ConsumeTaskPlugin):
                     )
 
         return tags
+
+    @property
+    def metadata_overrides(self) -> DocumentMetadataOverrides | None:
+        """
+        Extract document metadata from barcodes using configurable regex patterns.
+        Supports named groups for: correspondent, document_type, tags,
+        title, owner, created, and custom_field_name/custom_field_value.
+        Tags can be comma-separated.
+        Regex substitution is applied like tag barcode mapping.
+        If only numbered groups are present, the first two groups are treated as
+        custom field name/value.
+        """
+        if not self.settings.barcode_enable_metadata:
+            return None
+
+        if not self.settings.barcode_metadata_mapping:
+            return None
+
+        # Ensure the barcodes have been read
+        self.detect()
+
+        overrides = DocumentMetadataOverrides()
+        custom_fields: dict[int, str] = {}
+        seen_custom_field_keys: set[str] = set()
+        auto_create = {
+            value.lower()
+            for value in (self.settings.barcode_metadata_auto_create or [])
+        }
+
+        def _apply_substitution(
+            raw: str,
+            pattern: str,
+            substitution: str,
+        ) -> str | None:
+            """Apply regex substitution to extract value from barcode text."""
+            if not re.match(pattern, raw, flags=re.IGNORECASE):
+                return None
+            return (
+                re.sub(pattern, substitution, raw, flags=re.IGNORECASE)
+                if substitution
+                else raw
+            )
+
+        def _extract_pair(match: re.Match) -> tuple[str | None, str | None]:
+            gd = match.groupdict()
+            # Prefer explicit name/value pairs
+            if "custom_field_name" in gd:
+                name = gd.get("custom_field_name")
+                value = gd.get("custom_field_value")
+                return name, value
+            # Fallback to numbered groups
+            groups = match.groups()
+            if len(groups) >= 2:
+                return groups[0], groups[1]
+            return None, None
+
+        for barcode in self.barcodes:
+            text = barcode.value
+            for pattern, substitution in self.settings.barcode_metadata_mapping.items():
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if not match:
+                    continue
+
+                gd = match.groupdict()
+
+                # Correspondent
+                if "correspondent" in gd and gd.get("correspondent"):
+                    correspondent_name = _apply_substitution(
+                        text,
+                        pattern,
+                        substitution,
+                    )
+                    if correspondent_name and overrides.correspondent_id is None:
+                        try:
+                            from documents.models import Correspondent
+
+                            if "correspondent" in auto_create:
+                                correspondent, created = (
+                                    Correspondent.objects.get_or_create(
+                                        name__iexact=correspondent_name,
+                                        defaults={"name": correspondent_name},
+                                    )
+                                )
+                                if created:
+                                    logger.info(
+                                        f"Auto-created correspondent '{correspondent_name}' (id={correspondent.pk})",
+                                    )
+                            else:
+                                correspondent = Correspondent.objects.get(
+                                    name__iexact=correspondent_name,
+                                )
+                            overrides.correspondent_id = correspondent.pk
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to resolve correspondent '{correspondent_name}': {e}",
+                            )
+
+                # Document type
+                if "document_type" in gd and gd.get("document_type"):
+                    doc_type_name = _apply_substitution(text, pattern, substitution)
+                    if doc_type_name and overrides.document_type_id is None:
+                        try:
+                            from documents.models import DocumentType
+
+                            if "document_type" in auto_create:
+                                doc_type, _ = DocumentType.objects.get_or_create(
+                                    name__iexact=doc_type_name,
+                                    defaults={"name": doc_type_name},
+                                )
+                            else:
+                                doc_type = DocumentType.objects.get(
+                                    name__iexact=doc_type_name,
+                                )
+                            overrides.document_type_id = doc_type.pk
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to resolve document type '{doc_type_name}': {e}",
+                            )
+
+                # Tags
+                if ("tag" in gd and gd.get("tag")) or ("tags" in gd and gd.get("tags")):
+                    tags_value = _apply_substitution(text, pattern, substitution)
+                    if tags_value:
+                        tag_names = [
+                            name.strip()
+                            for name in tags_value.split(",")
+                            if name.strip()
+                        ]
+                        for tag_name in tag_names:
+                            try:
+                                from documents.models import Tag
+
+                                if "tag" in auto_create or "tags" in auto_create:
+                                    tag, created = Tag.objects.get_or_create(
+                                        name__iexact=tag_name,
+                                        defaults={"name": tag_name},
+                                    )
+                                    if created:
+                                        logger.info(
+                                            f"Auto-created tag '{tag_name}' (id={tag.pk})",
+                                        )
+                                else:
+                                    tag = Tag.objects.get(name__iexact=tag_name)
+
+                                if overrides.tag_ids is None:
+                                    overrides.tag_ids = []
+                                if tag.pk not in overrides.tag_ids:
+                                    overrides.tag_ids.append(tag.pk)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to resolve tag '{tag_name}': {e}",
+                                )
+
+                # Title
+                if "title" in gd and gd.get("title"):
+                    title_value = _apply_substitution(text, pattern, substitution)
+                    if title_value and overrides.title is None:
+                        overrides.title = title_value
+
+                # Owner
+                if "owner" in gd and gd.get("owner"):
+                    owner_value = _apply_substitution(text, pattern, substitution)
+                    if owner_value and overrides.owner_id is None:
+                        try:
+                            from django.contrib.auth import get_user_model
+
+                            User = get_user_model()
+                            owner = User.objects.get(username__iexact=owner_value)
+                            overrides.owner_id = owner.pk
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to resolve owner '{owner_value}': {e}",
+                            )
+
+                # Created date
+                if "created" in gd and gd.get("created"):
+                    created_value = _apply_substitution(text, pattern, substitution)
+                    if created_value and overrides.created is None:
+                        try:
+                            overrides.created = datetime.date.fromisoformat(
+                                created_value,
+                            )
+                        except Exception:
+                            logger.warning(
+                                f"Failed to parse created date '{created_value}'",
+                            )
+
+                # Custom fields
+                if "custom_field_name" in gd or len(match.groups()) >= 2:
+                    cf_result = _apply_substitution(text, pattern, substitution)
+                    if cf_result:
+                        # Parse the result as "name=value"
+                        if "=" in cf_result:
+                            cf_name, cf_value = cf_result.split("=", 1)
+                        else:
+                            # Fallback to direct extraction if no = in result
+                            cf_name, cf_value = _extract_pair(match)
+
+                        if cf_name and cf_value:
+                            if cf_name in seen_custom_field_keys:
+                                logger.warning(
+                                    f"Custom field '{cf_name}' already set, ignoring '{cf_value}'",
+                                )
+                            else:
+                                try:
+                                    from documents.models import CustomField
+
+                                    if "custom_field" in auto_create:
+                                        cf_obj, created = (
+                                            CustomField.objects.get_or_create(
+                                                name=cf_name,
+                                                defaults={
+                                                    "data_type": CustomField.FieldDataType.STRING,
+                                                },
+                                            )
+                                        )
+                                        if created:
+                                            logger.info(
+                                                f"Auto-created custom field '{cf_name}' (id={cf_obj.id})",
+                                            )
+                                    else:
+                                        cf_obj = CustomField.objects.get(name=cf_name)
+
+                                    custom_fields[cf_obj.id] = cf_value
+                                    seen_custom_field_keys.add(cf_name)
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to resolve custom field '{cf_name}': {e}",
+                                    )
+
+        if custom_fields:
+            overrides.custom_fields = custom_fields
+
+        has_overrides = any(
+            value is not None
+            for value in (
+                overrides.title,
+                overrides.correspondent_id,
+                overrides.document_type_id,
+                overrides.tag_ids,
+                overrides.created,
+                overrides.owner_id,
+                overrides.custom_fields,
+            )
+        )
+
+        return overrides if has_overrides else None
 
     def get_separation_pages(self) -> dict[int, bool]:
         """
