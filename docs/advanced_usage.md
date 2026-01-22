@@ -807,6 +807,243 @@ See the relevant settings [`PAPERLESS_CONSUMER_ENABLE_TAG_BARCODE`](configuratio
 and [`PAPERLESS_CONSUMER_TAG_BARCODE_MAPPING`](configuration.md#PAPERLESS_CONSUMER_TAG_BARCODE_MAPPING)
 for more information.
 
+### Metadata Extraction
+
+When enabled, Paperless can extract comprehensive metadata from barcodes and automatically assign it to documents during consumption. This powerful feature allows you to encode document properties directly on printed pages using QR codes or other barcode types.
+
+See the relevant settings [`PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA`](configuration.md#PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA),
+[`PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING`](configuration.md#PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING),
+and [`PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE`](configuration.md#PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE)
+for configuration details.
+
+#### Supported Properties
+
+The barcode metadata feature can extract and assign the following document properties:
+
+-   **Correspondent**: Assign a correspondent to the document
+-   **Document Type**: Set the document type
+-   **Tags**: Apply one or multiple tags (comma-separated)
+-   **Title**: Set the document title
+-   **Owner**: Assign document ownership to a specific user
+-   **Created Date**: Set the document creation date (ISO format: YYYY-MM-DD)
+-   **Custom Fields**: Set custom field values using name=value format
+
+#### Configuration
+
+The feature uses regex patterns with named groups to identify and extract metadata from barcode text. The configuration is a JSON mapping where keys are regex patterns and values are substitution strings.
+
+**Basic Example:**
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "CORR:(?P<correspondent>.*)": "\\g<correspondent>",
+  "TYPE:(?P<document_type>.*)": "\\g<document_type>",
+  "TAG:(?P<tags>.*)": "\\g<tags>",
+  "TITLE:(?P<title>.*)": "\\g<title>",
+  "OWNER:(?P<owner>.*)": "\\g<owner>",
+  "DATE:(?P<created>\\d{4}-\\d{2}-\\d{2})": "\\g<created>",
+  "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "\\g<custom_field_name>=\\g<custom_field_value>"
+}'
+```
+
+#### Named Groups
+
+Each property type uses specific named groups in the regex pattern:
+
+| Property      | Named Group(s)                               | Example Pattern                                           |
+| ------------- | -------------------------------------------- | --------------------------------------------------------- |
+| Correspondent | `correspondent`                              | `CORR:(?P<correspondent>.*)`                              |
+| Document Type | `document_type`                              | `TYPE:(?P<document_type>.*)`                              |
+| Tags          | `tags` or `tag`                              | `TAG:(?P<tags>.*)`                                        |
+| Title         | `title`                                      | `TITLE:(?P<title>.*)`                                     |
+| Owner         | `owner`                                      | `OWNER:(?P<owner>.*)`                                     |
+| Created Date  | `created`                                    | `DATE:(?P<created>\\d{4}-\\d{2}-\\d{2})`                  |
+| Custom Fields | `custom_field_name` and `custom_field_value` | `CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)` |
+
+#### Substitution and Mapping
+
+The substitution value determines how the extracted barcode text is transformed before assignment. The regex pattern matches the barcode text, and the substitution value (using Python's `re.sub()` syntax) transforms it into the final value used for lookup or creation.
+
+**Example with username mapping:**
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "OWNER:(?P<owner>alice)": "alice.smith",
+  "OWNER:(?P<owner>bob)": "bob.jones"
+}'
+```
+
+A barcode containing `OWNER:alice` would assign the document to user `alice.smith`.
+
+**Example with prefix transformation:**
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "CORR:(?P<correspondent>.*)": "Company: \\g<correspondent>"
+}'
+```
+
+A barcode containing `CORR:ACME` would look up or create a correspondent named `Company: ACME`.
+
+#### Tags with Multiple Values
+
+Tags support comma-separated values in a single barcode. Each tag name will be trimmed and processed individually.
+
+**Example:**
+
+Barcode text: `TAG:Invoice, 2024, Important`
+
+This will apply three tags: "Invoice", "2024", and "Important" to the document.
+
+#### Custom Fields
+
+Custom fields use a special format with both field name and value encoded in the barcode:
+
+**Format:** `CF:FieldName=FieldValue`
+
+**Example barcodes:**
+
+-   `CF:Department=Engineering` - Sets custom field "Department" to "Engineering"
+-   `CF:Invoice Number=INV-2024-001` - Sets custom field "Invoice Number" to "INV-2024-001"
+-   `CF:Project=Alpha` - Sets custom field "Project" to "Alpha"
+
+The substitution value can transform both the field name and value:
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "Prefix-\\g<custom_field_name>=Prefix-\\g<custom_field_value>"
+}'
+```
+
+#### Multiple Patterns for the Same Property
+
+You can define multiple regex patterns that map to the same property, useful for supporting different languages or formats:
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "TITLE:(?P<title>.*)": "\\g<title>",
+  "HEADING:(?P<title>.*)": "\\g<title>",
+  "TITRE:(?P<title>.*)": "\\g<title>"
+}'
+```
+
+This configuration accepts `TITLE:`, `HEADING:`, or `TITRE:` (French) prefixes for setting the document title.
+
+#### Auto-Creation of Entities
+
+By default, Paperless will only assign existing correspondents, document types, tags, and custom fields. To automatically create these entities when they don't exist, use the `PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE` setting:
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE='["correspondent", "document_type", "tag", "custom_field"]'
+```
+
+Supported values:
+
+-   `correspondent` - Auto-create correspondents
+-   `document_type` - Auto-create document types
+-   `tag` or `tags` - Auto-create tags
+-   `custom_field` - Auto-create custom fields (as STRING type)
+
+!!! note
+
+    The `owner` and `created` properties do not support auto-creation. Users must exist in the system, and dates must be in valid ISO format (YYYY-MM-DD).
+
+#### Usage Examples
+
+**Example 1: Basic invoice processing**
+
+Print QR codes on your invoice pages:
+
+-   `CORR:ACME Corp`
+-   `TYPE:Invoice`
+-   `TAG:Unpaid`
+-   `DATE:2024-01-15`
+
+Configuration:
+
+```bash
+PAPERLESS_CONSUMER_ENABLE_BARCODE_METADATA=true
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "CORR:(?P<correspondent>.*)": "\\g<correspondent>",
+  "TYPE:(?P<document_type>.*)": "\\g<document_type>",
+  "TAG:(?P<tags>.*)": "\\g<tags>",
+  "DATE:(?P<created>\\d{4}-\\d{2}-\\d{2})": "\\g<created>"
+}'
+PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE='["correspondent", "document_type", "tag"]'
+```
+
+The document will automatically be assigned to ACME Corp, typed as Invoice, tagged as Unpaid, and dated January 15, 2024.
+
+**Example 2: Multi-language support**
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "TYPE:(?P<document_type>.*)": "\\g<document_type>",
+  "TYP:(?P<document_type>.*)": "\\g<document_type>",
+  "TITLE:(?P<title>.*)": "\\g<title>",
+  "TITRE:(?P<title>.*)": "\\g<title>"
+}'
+```
+
+This supports both English and French barcode prefixes.
+
+**Example 3: Custom field tracking**
+
+Track additional metadata using custom fields:
+
+Barcodes:
+
+-   `CF:Project=Website Redesign`
+-   `CF:Client=ABC Industries`
+-   `CF:Status=In Review`
+
+Configuration:
+
+```bash
+PAPERLESS_CONSUMER_BARCODE_METADATA_MAPPING='{
+  "CF:(?P<custom_field_name>.+)=(?P<custom_field_value>.*)": "\\g<custom_field_name>=\\g<custom_field_value>"
+}'
+PAPERLESS_CONSUMER_BARCODE_METADATA_AUTO_CREATE='["custom_field"]'
+```
+
+**Example 4: Complete document metadata on one page**
+
+You can include multiple barcodes on a single page to set multiple properties at once:
+
+-   QR Code 1: `CORR:City Hall`
+-   QR Code 2: `TYPE:Official Document`
+-   QR Code 3: `TAG:Important, 2024, Municipal`
+-   QR Code 4: `TITLE:Building Permit`
+-   QR Code 5: `OWNER:adminuser`
+-   QR Code 6: `DATE:2024-03-15`
+-   QR Code 7: `CF:Permit Number=2024-BP-12345`
+
+All metadata will be extracted and applied to the document during consumption.
+
+#### Interaction with Other Features
+
+-   **Document Splitting**: Metadata barcodes work alongside document splitting. Each split document can have its own metadata barcodes.
+-   **Tag Barcodes**: The metadata extraction feature is separate from and complements the tag-specific barcode feature.
+-   **ASN Barcodes**: ASN assignment and metadata extraction work independently and can both be enabled.
+-   **Manual Overrides**: Manually set metadata on a document takes precedence over barcode-extracted metadata.
+
+#### Troubleshooting
+
+If metadata is not being extracted as expected:
+
+1. **Check barcode detection**: Ensure barcodes are being detected at all by reviewing the consumer logs
+2. **Verify regex patterns**: Test your regex patterns match your barcode text exactly (case-insensitive matching is used)
+3. **Check entity existence**: If auto-create is disabled, ensure correspondents, types, tags, and custom fields exist in Paperless
+4. **Review substitution**: Verify the substitution result matches the expected name in your database
+5. **Examine logs**: The webserver log will show warnings when metadata extraction fails with detailed error messages
+
+**Common issues:**
+
+-   **Owner not found**: The username must match exactly (case-insensitive). Users cannot be auto-created.
+-   **Invalid date format**: Created dates must be in ISO format (YYYY-MM-DD)
+-   **Custom field format**: The substitution result must contain `=` to separate field name and value (e.g., `FieldName=FieldValue`), or use named groups `custom_field_name` and `custom_field_value`
+-   **Escaping in JSON**: Remember to escape backslashes in JSON configuration (`\\` for `\`)
+
 ## Automatic collation of double-sided documents {#collate}
 
 !!! note
